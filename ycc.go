@@ -82,10 +82,11 @@ func (p *ycc) SubImage(r image.Rectangle) image.Image {
 }
 
 // newYCC returns a new ycc with the given bounds and subsample ratio.
-func newYCC(r image.Rectangle, s image.YCbCrSubsampleRatio) *ycc {
+func newYCC(r image.Rectangle, s image.YCbCrSubsampleRatio) (*ycc, func()) {
 	w, h := r.Dx(), r.Dy()
-	buf := make([]uint8, 3*w*h)
-	return &ycc{Pix: buf, Stride: 3 * w, Rect: r, SubsampleRatio: s}
+	size := 3 * w * h
+	pix, canc := GetPixelBuffer(size)
+	return &ycc{Pix: pix, Stride: 3 * w, Rect: r, SubsampleRatio: s}, canc
 }
 
 // Copy of image.YCbCrSubsampleRatio constants - this allows us to support

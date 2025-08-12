@@ -21,7 +21,8 @@ THIS SOFTWARE.
 // utilized in the computations.
 //
 // Example:
-//     imgResized := resize.Resize(1000, 0, imgOld, resize.MitchellNetravali)
+//
+//	imgResized := resize.Resize(1000, 0, imgOld, resize.MitchellNetravali)
 package resize
 
 import (
@@ -79,7 +80,7 @@ var blur = 1.0
 // the aspect ratio is that of the originating image.
 // The resizing algorithm uses channels for parallel computation.
 // If the input image has width or height of 0, it is returned unchanged.
-func Resize(width, height uint, img image.Image, interp InterpolationFunction) image.Image {
+func Resize(width, height uint, img image.Image, interp InterpolationFunction) (image.Image, func()) {
 	scaleX, scaleY := calcFactors(width, height, float64(img.Bounds().Dx()), float64(img.Bounds().Dy()))
 	if width == 0 {
 		width = uint(0.7 + float64(img.Bounds().Dx())/scaleX)
@@ -90,12 +91,12 @@ func Resize(width, height uint, img image.Image, interp InterpolationFunction) i
 
 	// Trivial case: return input image
 	if int(width) == img.Bounds().Dx() && int(height) == img.Bounds().Dy() {
-		return img
+		return img, func() {}
 	}
 
 	// Input image has no pixels
 	if img.Bounds().Dx() <= 0 || img.Bounds().Dy() <= 0 {
-		return img
+		return img, func() {}
 	}
 
 	if interp == NearestNeighbor {
@@ -111,8 +112,10 @@ func Resize(width, height uint, img image.Image, interp InterpolationFunction) i
 	switch input := img.(type) {
 	case *image.RGBA:
 		// 8-bit precision
-		temp := image.NewRGBA(image.Rect(0, 0, input.Bounds().Dy(), int(width)))
-		result := image.NewRGBA(image.Rect(0, 0, int(width), int(height)))
+		temp, cancTemp := NewRGBA(image.Rect(0, 0, input.Bounds().Dy(), int(width)))
+		defer cancTemp()
+
+		result, canc := NewRGBA(image.Rect(0, 0, int(width), int(height)))
 
 		// horizontal filter, results in transposed temporary image
 		coeffs, offset, filterLength := createWeights8(temp.Bounds().Dy(), taps, blur, scaleX, kernel)
@@ -137,11 +140,13 @@ func Resize(width, height uint, img image.Image, interp InterpolationFunction) i
 			}()
 		}
 		wg.Wait()
-		return result
+		return result, canc
 	case *image.NRGBA:
 		// 8-bit precision
-		temp := image.NewRGBA(image.Rect(0, 0, input.Bounds().Dy(), int(width)))
-		result := image.NewRGBA(image.Rect(0, 0, int(width), int(height)))
+		temp, cancTemp := NewRGBA(image.Rect(0, 0, input.Bounds().Dy(), int(width)))
+		defer cancTemp()
+
+		result, canc := NewRGBA(image.Rect(0, 0, int(width), int(height)))
 
 		// horizontal filter, results in transposed temporary image
 		coeffs, offset, filterLength := createWeights8(temp.Bounds().Dy(), taps, blur, scaleX, kernel)
@@ -166,14 +171,15 @@ func Resize(width, height uint, img image.Image, interp InterpolationFunction) i
 			}()
 		}
 		wg.Wait()
-		return result
+		return result, canc
 
 	case *image.YCbCr:
 		// 8-bit precision
 		// accessing the YCbCr arrays in a tight loop is slow.
 		// converting the image to ycc increases performance by 2x.
-		temp := newYCC(image.Rect(0, 0, input.Bounds().Dy(), int(width)), input.SubsampleRatio)
-		result := newYCC(image.Rect(0, 0, int(width), int(height)), image.YCbCrSubsampleRatio444)
+		temp, cancTemp := newYCC(image.Rect(0, 0, input.Bounds().Dy(), int(width)), input.SubsampleRatio)
+		defer cancTemp()
+		result, canc := newYCC(image.Rect(0, 0, int(width), int(height)), image.YCbCrSubsampleRatio444)
 
 		coeffs, offset, filterLength := createWeights8(temp.Bounds().Dy(), taps, blur, scaleX, kernel)
 		in := imageYCbCrToYCC(input)
@@ -197,11 +203,12 @@ func Resize(width, height uint, img image.Image, interp InterpolationFunction) i
 			}()
 		}
 		wg.Wait()
-		return result.YCbCr()
+		return result.YCbCr(), canc
 	case *image.RGBA64:
 		// 16-bit precision
-		temp := image.NewRGBA64(image.Rect(0, 0, input.Bounds().Dy(), int(width)))
-		result := image.NewRGBA64(image.Rect(0, 0, int(width), int(height)))
+		temp, cancTemp := NewRGBA64(image.Rect(0, 0, input.Bounds().Dy(), int(width)))
+		defer cancTemp()
+		result, canc := NewRGBA64(image.Rect(0, 0, int(width), int(height)))
 
 		// horizontal filter, results in transposed temporary image
 		coeffs, offset, filterLength := createWeights16(temp.Bounds().Dy(), taps, blur, scaleX, kernel)
@@ -226,11 +233,12 @@ func Resize(width, height uint, img image.Image, interp InterpolationFunction) i
 			}()
 		}
 		wg.Wait()
-		return result
+		return result, canc
 	case *image.NRGBA64:
 		// 16-bit precision
-		temp := image.NewRGBA64(image.Rect(0, 0, input.Bounds().Dy(), int(width)))
-		result := image.NewRGBA64(image.Rect(0, 0, int(width), int(height)))
+		temp, cancTemp := NewRGBA64(image.Rect(0, 0, input.Bounds().Dy(), int(width)))
+		defer cancTemp()
+		result, canc := NewRGBA64(image.Rect(0, 0, int(width), int(height)))
 
 		// horizontal filter, results in transposed temporary image
 		coeffs, offset, filterLength := createWeights16(temp.Bounds().Dy(), taps, blur, scaleX, kernel)
@@ -255,11 +263,12 @@ func Resize(width, height uint, img image.Image, interp InterpolationFunction) i
 			}()
 		}
 		wg.Wait()
-		return result
+		return result, canc
 	case *image.Gray:
 		// 8-bit precision
-		temp := image.NewGray(image.Rect(0, 0, input.Bounds().Dy(), int(width)))
-		result := image.NewGray(image.Rect(0, 0, int(width), int(height)))
+		temp, cancTemp := NewGray(image.Rect(0, 0, input.Bounds().Dy(), int(width)))
+		defer cancTemp()
+		result, canc := NewGray(image.Rect(0, 0, int(width), int(height)))
 
 		// horizontal filter, results in transposed temporary image
 		coeffs, offset, filterLength := createWeights8(temp.Bounds().Dy(), taps, blur, scaleX, kernel)
@@ -284,11 +293,12 @@ func Resize(width, height uint, img image.Image, interp InterpolationFunction) i
 			}()
 		}
 		wg.Wait()
-		return result
+		return result, canc
 	case *image.Gray16:
 		// 16-bit precision
-		temp := image.NewGray16(image.Rect(0, 0, input.Bounds().Dy(), int(width)))
-		result := image.NewGray16(image.Rect(0, 0, int(width), int(height)))
+		temp, cancTemp := NewGray16(image.Rect(0, 0, input.Bounds().Dy(), int(width)))
+		defer cancTemp()
+		result, canc := NewGray16(image.Rect(0, 0, int(width), int(height)))
 
 		// horizontal filter, results in transposed temporary image
 		coeffs, offset, filterLength := createWeights16(temp.Bounds().Dy(), taps, blur, scaleX, kernel)
@@ -313,11 +323,12 @@ func Resize(width, height uint, img image.Image, interp InterpolationFunction) i
 			}()
 		}
 		wg.Wait()
-		return result
+		return result, canc
 	default:
 		// 16-bit precision
-		temp := image.NewRGBA64(image.Rect(0, 0, img.Bounds().Dy(), int(width)))
-		result := image.NewRGBA64(image.Rect(0, 0, int(width), int(height)))
+		temp, cancTemp := NewRGBA64(image.Rect(0, 0, img.Bounds().Dy(), int(width)))
+		defer cancTemp()
+		result, canc := NewRGBA64(image.Rect(0, 0, int(width), int(height)))
 
 		// horizontal filter, results in transposed temporary image
 		coeffs, offset, filterLength := createWeights16(temp.Bounds().Dy(), taps, blur, scaleX, kernel)
@@ -342,11 +353,11 @@ func Resize(width, height uint, img image.Image, interp InterpolationFunction) i
 			}()
 		}
 		wg.Wait()
-		return result
+		return result, canc
 	}
 }
 
-func resizeNearest(width, height uint, scaleX, scaleY float64, img image.Image, interp InterpolationFunction) image.Image {
+func resizeNearest(width, height uint, scaleX, scaleY float64, img image.Image, interp InterpolationFunction) (image.Image, func()) {
 	taps, _ := interp.kernel()
 	cpus := runtime.GOMAXPROCS(0)
 	wg := sync.WaitGroup{}
@@ -354,8 +365,9 @@ func resizeNearest(width, height uint, scaleX, scaleY float64, img image.Image, 
 	switch input := img.(type) {
 	case *image.RGBA:
 		// 8-bit precision
-		temp := image.NewRGBA(image.Rect(0, 0, input.Bounds().Dy(), int(width)))
-		result := image.NewRGBA(image.Rect(0, 0, int(width), int(height)))
+		temp, cancTemp := NewRGBA(image.Rect(0, 0, input.Bounds().Dy(), int(width)))
+		defer cancTemp()
+		result, canc := NewRGBA(image.Rect(0, 0, int(width), int(height)))
 
 		// horizontal filter, results in transposed temporary image
 		coeffs, offset, filterLength := createWeightsNearest(temp.Bounds().Dy(), taps, blur, scaleX)
@@ -380,11 +392,12 @@ func resizeNearest(width, height uint, scaleX, scaleY float64, img image.Image, 
 			}()
 		}
 		wg.Wait()
-		return result
+		return result, canc
 	case *image.NRGBA:
 		// 8-bit precision
-		temp := image.NewNRGBA(image.Rect(0, 0, input.Bounds().Dy(), int(width)))
-		result := image.NewNRGBA(image.Rect(0, 0, int(width), int(height)))
+		temp, canctemp := NewNRGBA(image.Rect(0, 0, input.Bounds().Dy(), int(width)))
+		defer canctemp()
+		result, canc := NewNRGBA(image.Rect(0, 0, int(width), int(height)))
 
 		// horizontal filter, results in transposed temporary image
 		coeffs, offset, filterLength := createWeightsNearest(temp.Bounds().Dy(), taps, blur, scaleX)
@@ -409,13 +422,14 @@ func resizeNearest(width, height uint, scaleX, scaleY float64, img image.Image, 
 			}()
 		}
 		wg.Wait()
-		return result
+		return result, canc
 	case *image.YCbCr:
 		// 8-bit precision
 		// accessing the YCbCr arrays in a tight loop is slow.
 		// converting the image to ycc increases performance by 2x.
-		temp := newYCC(image.Rect(0, 0, input.Bounds().Dy(), int(width)), input.SubsampleRatio)
-		result := newYCC(image.Rect(0, 0, int(width), int(height)), image.YCbCrSubsampleRatio444)
+		temp, cancTemp := newYCC(image.Rect(0, 0, input.Bounds().Dy(), int(width)), input.SubsampleRatio)
+		defer cancTemp()
+		result, canc := newYCC(image.Rect(0, 0, int(width), int(height)), image.YCbCrSubsampleRatio444)
 
 		coeffs, offset, filterLength := createWeightsNearest(temp.Bounds().Dy(), taps, blur, scaleX)
 		in := imageYCbCrToYCC(input)
@@ -439,11 +453,12 @@ func resizeNearest(width, height uint, scaleX, scaleY float64, img image.Image, 
 			}()
 		}
 		wg.Wait()
-		return result.YCbCr()
+		return result.YCbCr(), canc
 	case *image.RGBA64:
 		// 16-bit precision
-		temp := image.NewRGBA64(image.Rect(0, 0, input.Bounds().Dy(), int(width)))
-		result := image.NewRGBA64(image.Rect(0, 0, int(width), int(height)))
+		temp, cancTemp := NewRGBA64(image.Rect(0, 0, input.Bounds().Dy(), int(width)))
+		defer cancTemp()
+		result, canc := NewRGBA64(image.Rect(0, 0, int(width), int(height)))
 
 		// horizontal filter, results in transposed temporary image
 		coeffs, offset, filterLength := createWeightsNearest(temp.Bounds().Dy(), taps, blur, scaleX)
@@ -468,11 +483,12 @@ func resizeNearest(width, height uint, scaleX, scaleY float64, img image.Image, 
 			}()
 		}
 		wg.Wait()
-		return result
+		return result, canc
 	case *image.NRGBA64:
 		// 16-bit precision
-		temp := image.NewNRGBA64(image.Rect(0, 0, input.Bounds().Dy(), int(width)))
-		result := image.NewNRGBA64(image.Rect(0, 0, int(width), int(height)))
+		temp, cancTemp := NewNRGBA64(image.Rect(0, 0, input.Bounds().Dy(), int(width)))
+		defer cancTemp()
+		result, canc := NewNRGBA64(image.Rect(0, 0, int(width), int(height)))
 
 		// horizontal filter, results in transposed temporary image
 		coeffs, offset, filterLength := createWeightsNearest(temp.Bounds().Dy(), taps, blur, scaleX)
@@ -497,11 +513,12 @@ func resizeNearest(width, height uint, scaleX, scaleY float64, img image.Image, 
 			}()
 		}
 		wg.Wait()
-		return result
+		return result, canc
 	case *image.Gray:
 		// 8-bit precision
-		temp := image.NewGray(image.Rect(0, 0, input.Bounds().Dy(), int(width)))
-		result := image.NewGray(image.Rect(0, 0, int(width), int(height)))
+		temp, cancTemp := NewGray(image.Rect(0, 0, input.Bounds().Dy(), int(width)))
+		defer cancTemp()
+		result, canc := NewGray(image.Rect(0, 0, int(width), int(height)))
 
 		// horizontal filter, results in transposed temporary image
 		coeffs, offset, filterLength := createWeightsNearest(temp.Bounds().Dy(), taps, blur, scaleX)
@@ -526,11 +543,12 @@ func resizeNearest(width, height uint, scaleX, scaleY float64, img image.Image, 
 			}()
 		}
 		wg.Wait()
-		return result
+		return result, canc
 	case *image.Gray16:
 		// 16-bit precision
-		temp := image.NewGray16(image.Rect(0, 0, input.Bounds().Dy(), int(width)))
-		result := image.NewGray16(image.Rect(0, 0, int(width), int(height)))
+		temp, cancTemp := NewGray16(image.Rect(0, 0, input.Bounds().Dy(), int(width)))
+		defer cancTemp()
+		result, canc := NewGray16(image.Rect(0, 0, int(width), int(height)))
 
 		// horizontal filter, results in transposed temporary image
 		coeffs, offset, filterLength := createWeightsNearest(temp.Bounds().Dy(), taps, blur, scaleX)
@@ -555,11 +573,12 @@ func resizeNearest(width, height uint, scaleX, scaleY float64, img image.Image, 
 			}()
 		}
 		wg.Wait()
-		return result
+		return result, canc
 	default:
 		// 16-bit precision
-		temp := image.NewRGBA64(image.Rect(0, 0, img.Bounds().Dy(), int(width)))
-		result := image.NewRGBA64(image.Rect(0, 0, int(width), int(height)))
+		temp, canc := NewRGBA64(image.Rect(0, 0, img.Bounds().Dy(), int(width)))
+		defer canc()
+		result, canc := NewRGBA64(image.Rect(0, 0, int(width), int(height)))
 
 		// horizontal filter, results in transposed temporary image
 		coeffs, offset, filterLength := createWeightsNearest(temp.Bounds().Dy(), taps, blur, scaleX)
@@ -584,7 +603,7 @@ func resizeNearest(width, height uint, scaleX, scaleY float64, img image.Image, 
 			}()
 		}
 		wg.Wait()
-		return result
+		return result, canc
 	}
 
 }
